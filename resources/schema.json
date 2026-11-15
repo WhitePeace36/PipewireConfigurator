@@ -1,5 +1,5 @@
 {
-  "comment": "Settings shown by Pipewire Simple Configurator. Each group appears on every page whose scope is listed in 'scopes'; a setting can narrow that with its own 'scopes'. Types: bool, int, float, enum, rate, ratelist, quantum, fraction, string, list. 'default' is the documented PipeWire/WirePlumber default and is only used when no config file and no running device report a value.",
+  "comment": "Settings shown by Pipewire Configurator. Each group appears on every page whose scope is listed in 'scopes'; a setting can narrow that with its own 'scopes'. Types: bool, int, float, enum, rate, ratelist, quantum, fraction, string, list. 'default' is the documented PipeWire/WirePlumber default and is only used when no config file and no running device report a value.",
   "groups": [
     {
       "id": "graph.rates",

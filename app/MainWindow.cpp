@@ -195,6 +195,8 @@ void MainWindow::reloadFromDisk()
 {
   m_loadWarnings.clear();
   m_unreadable.clear();
+  // before loading: an old drop-in that keeps its name would count as someone else's file
+  m_loadWarnings += m_paths.migrateOldOwnFiles();
   m_model = ConfigModel::load(m_paths, &m_loadWarnings, &m_unreadable);
   m_baseline = m_model.render();
   for (ConfigFile f : allConfigFiles())

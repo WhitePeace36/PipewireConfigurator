@@ -1,3 +1,14 @@
+pipewire-configurator (2.1.0) unstable; urgency=medium
+
+  * Renamed to Pipewire Configurator: package pipewire-configurator (replaces
+    pipewire-configurator-simple), program and desktop file
+    pipewire-configurator, repository WhitePeace36/PipewireConfigurator.
+  * The drop-in files are now called 60-pipewire-configurator.conf. Files saved
+    by 2.0.x (60-simple-configurator.conf) are renamed on the first start, so
+    their settings are kept.
+
+ -- Timon <timon2201@gmail.com>  Sun, 15 Nov 2026 23:55:00 +0100
+
 pipewire-configurator-simple (2.0) unstable; urgency=medium
 
   * Rework around drop-in files: only the configurator's own files are written.

@@ -1,4 +1,4 @@
-# <img src="resources/icons/SimplePipewireConfigurator.svg" width="48" align="center"> PipewireSimpleConfigurator
+# <img src="resources/icons/pipewire-configurator.svg" width="48" align="center"> Pipewire Configurator
 
 A GUI for the PipeWire and WirePlumber settings you would otherwise edit by hand: sample rates and buffer sizes of the graph, resampler and channel mixing, per-device and Bluetooth settings, and per-application tweaks.
 
@@ -24,17 +24,21 @@ Pages warn about combinations that do not work, for example a default rate that 
 The configurator only writes its own drop-in files:
 
 ```
-~/.config/pipewire/pipewire.conf.d/60-simple-configurator.conf
-~/.config/pipewire/client.conf.d/60-simple-configurator.conf
-~/.config/pipewire/client-rt.conf.d/60-simple-configurator.conf     (PipeWire before 1.4 only)
-~/.config/pipewire/pipewire-pulse.conf.d/60-simple-configurator.conf
-~/.config/pipewire/jack.conf.d/60-simple-configurator.conf
-~/.config/wireplumber/wireplumber.conf.d/60-simple-configurator.conf
+~/.config/pipewire/pipewire.conf.d/60-pipewire-configurator.conf
+~/.config/pipewire/client.conf.d/60-pipewire-configurator.conf
+~/.config/pipewire/client-rt.conf.d/60-pipewire-configurator.conf     (PipeWire before 1.4 only)
+~/.config/pipewire/pipewire-pulse.conf.d/60-pipewire-configurator.conf
+~/.config/pipewire/jack.conf.d/60-pipewire-configurator.conf
+~/.config/wireplumber/wireplumber.conf.d/60-pipewire-configurator.conf
 ```
 
-PipeWire loads exactly one main file per config (the first it finds in `~/.config/pipewire`, `/etc/pipewire`, `/usr/share/pipewire`), then merges the drop-ins from all three `*.conf.d` folders on top: `/usr/share` first, then `/etc`, then `~/.config`, alphabetically within each folder. Later drop-ins override single keys of earlier ones, and lists such as rules are appended. So PipeWire and WirePlumber load these files on top of their normal configuration, so your other config files are never changed and PipeWire updates to the main files keep working. To undo everything, delete these files (or use *Remove all configurator settings* on the *Config files* page). Drop-ins in `~/.config` that sort after `60-simple-configurator.conf` are loaded later and win; the configurator shows a warning on every setting they override.
+PipeWire loads exactly one main file per config (the first it finds in `~/.config/pipewire`, `/etc/pipewire`, `/usr/share/pipewire`), then merges the drop-ins from all three `*.conf.d` folders on top: `/usr/share` first, then `/etc`, then `~/.config`, alphabetically within each folder. Later drop-ins override single keys of earlier ones, and lists such as rules are appended. So PipeWire and WirePlumber load these files on top of their normal configuration, so your other config files are never changed and PipeWire updates to the main files keep working. To undo everything, delete these files (or use *Remove all configurator settings* on the *Config files* page). Drop-ins in `~/.config` that sort after `60-pipewire-configurator.conf` are loaded later and win; the configurator shows a warning on every setting they override.
 
 **Save** writes the files. **Save and Apply** also restarts only the services that read the changed files (`pipewire`, `pipewire-pulse`, `wireplumber`). Native PipeWire applications read stream settings when they start, so restart them afterwards.
+
+### Upgrading from version 2.0
+
+Up to version 2.0 the program was called Pipewire Simple Configurator (package `pipewire-configurator-simple`) and its drop-in files `60-simple-configurator.conf`. On the first start, 2.1 renames them to `60-pipewire-configurator.conf`, so all settings are kept. On Arch, `pacman -Syu` replaces the old package; the .deb and .rpm replace it on installation.
 
 ### Upgrading from version 0.1
 
@@ -55,13 +59,13 @@ make -j$(nproc)
 ctest            # optional, runs the unit and UI tests
 ```
 
-Then run `./SimplePipewireConfigurator` directly, or build a package for your distribution:
+Then run `./pipewire-configurator` directly, or build a package for your distribution:
 
 | Distribution | Command | Result |
 | --- | --- | --- |
-| Arch, Manjaro, EndeavourOS | `makepkg -si` in the repository root | `pipewire-configurator-simple-<version>-1-x86_64.pkg.tar.zst` in the repository root, installed |
-| Debian, Ubuntu, Mint | `cpack -G DEB` in the build folder (needs `dpkg-dev`) | `pipewire-configurator-simple_<version>_amd64.deb` |
-| Fedora, openSUSE | `cpack -G RPM` in the build folder (needs `rpm-build`) | `pipewire-configurator-simple-<version>-1.x86_64.rpm` |
+| Arch, Manjaro, EndeavourOS | `makepkg -si` in the repository root | `pipewire-configurator-<version>-1-x86_64.pkg.tar.zst` in the repository root, installed |
+| Debian, Ubuntu, Mint | `cpack -G DEB` in the build folder (needs `dpkg-dev`) | `pipewire-configurator_<version>_amd64.deb` |
+| Fedora, openSUSE | `cpack -G RPM` in the build folder (needs `rpm-build`) | `pipewire-configurator-<version>-1.x86_64.rpm` |
 
 `cpack` without `-G` builds both the .deb and the .rpm. Build each package on the distribution (and release) it is meant for: the library dependencies are taken from the system it is built on. The PKGBUILD builds from the files in the repository, so nothing is downloaded.
 

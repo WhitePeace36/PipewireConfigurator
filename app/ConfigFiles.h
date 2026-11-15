@@ -32,11 +32,18 @@ struct ConfigPaths
   QStringList systemWireplumberDirs;  // same; includes $XDG_CONFIG_DIRS and $XDG_DATA_DIRS like WirePlumber
 
   static ConfigPaths fromEnvironment();
-  static QString ownFileName() { return QStringLiteral("60-simple-configurator.conf"); }
+  static QString ownFileName() { return QStringLiteral("60-pipewire-configurator.conf"); }
+  // Name of our drop-in up to version 2.0.x (Pipewire Simple Configurator).
+  static QString oldOwnFileName() { return QStringLiteral("60-simple-configurator.conf"); }
 
   QString userDir(ConfigFile f) const;  // ~/.config/pipewire or ~/.config/wireplumber
   QStringList systemDirs(ConfigFile f) const;
   QString ownFile(ConfigFile f) const;         // our drop-in
+  QString oldOwnFile(ConfigFile f) const;      // our drop-in under its name up to 2.0.x
+  // Renames drop-ins saved under the old name to ownFileName(), so settings made with 2.0.x stay ours.
+  // When both names exist the new file wins and the old one becomes a backup (*.bak-<date>, which
+  // PipeWire doesn't load). Returns one message per file that could not be moved.
+  QStringList migrateOldOwnFiles() const;
   QString legacyUserCopy(ConfigFile f) const;  // full copy in the user dir, e.g. ~/.config/pipewire/pipewire.conf
   // PipeWire before 1.4 has a separate client-rt.conf that realtime clients (pw-cat, the ALSA plugin, ...)
   // read instead of client.conf; stream settings must then be written to both.

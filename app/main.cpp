@@ -7,12 +7,12 @@
 int main(int argc, char* argv[])
 {
   QApplication app(argc, argv);
-  QApplication::setApplicationName("SimplePipewireConfigurator");
+  QApplication::setApplicationName("pipewire-configurator");
   QApplication::setApplicationDisplayName(QObject::tr("Pipewire Configurator"));
   QApplication::setApplicationVersion(APP_VERSION);
-  QApplication::setDesktopFileName("SimplePipewireConfigurator");
+  QApplication::setDesktopFileName("pipewire-configurator");
   // The installed theme icon if present, otherwise the copy built into the program.
-  QApplication::setWindowIcon(QIcon::fromTheme("SimplePipewireConfigurator", QIcon(":/icons/SimplePipewireConfigurator.png")));
+  QApplication::setWindowIcon(QIcon::fromTheme("pipewire-configurator", QIcon(":/icons/pipewire-configurator.png")));
 
   QCommandLineParser parser;
   parser.setApplicationDescription(QObject::tr("Configure PipeWire and WirePlumber."));

@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: PipewireSimpleConfigurator
+Upstream-Name: PipewireConfigurator
 Upstream-Contact: Timon <timon2201@gmail.com>
-Source: https://github.com/WhitePeace36/PipewireSimpleConfigurator
+Source: https://github.com/WhitePeace36/PipewireConfigurator
 
 Files: *
 Copyright: 2026 Timon <timon2201@gmail.com>

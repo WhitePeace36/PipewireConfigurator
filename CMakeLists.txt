@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(PipewireConfigurator VERSION 2.0.1 LANGUAGES CXX)
+project(PipewireConfigurator VERSION 2.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -31,18 +31,18 @@ add_library(psc_ui STATIC
     app/SettingsPage.cpp app/SettingsPage.h
 )
 target_link_libraries(psc_ui PUBLIC psc_core Qt6::Widgets)
-qt_add_resources(psc_ui "icons" PREFIX "/" BASE resources FILES resources/icons/SimplePipewireConfigurator.png)
+qt_add_resources(psc_ui "icons" PREFIX "/" BASE resources FILES resources/icons/pipewire-configurator.png)
 
-add_executable(SimplePipewireConfigurator app/main.cpp)
-target_link_libraries(SimplePipewireConfigurator PRIVATE psc_ui)
-target_compile_definitions(SimplePipewireConfigurator PRIVATE APP_VERSION="${PROJECT_VERSION}")
+add_executable(pipewire-configurator app/main.cpp)
+target_link_libraries(pipewire-configurator PRIVATE psc_ui)
+target_compile_definitions(pipewire-configurator PRIVATE APP_VERSION="${PROJECT_VERSION}")
 
-install(TARGETS SimplePipewireConfigurator RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES SimplePipewireConfigurator.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-install(FILES resources/icons/SimplePipewireConfigurator.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
-install(FILES resources/icons/SimplePipewireConfigurator.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)
+install(TARGETS pipewire-configurator RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES pipewire-configurator.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES resources/icons/pipewire-configurator.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+install(FILES resources/icons/pipewire-configurator.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)
 # Copyright file in the format Debian requires (the license itself is in the system's common licenses).
-install(FILES packaging/copyright DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pipewire-configurator-simple)
+install(FILES packaging/copyright DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pipewire-configurator)
 # Compressed changelog, as Debian expects it for a native package.
 # (gzip -9n: maximum compression and no timestamp, so the package is reproducible.)
 find_program(GZIP_EXECUTABLE gzip)
@@ -55,7 +55,7 @@ if(NOT GZIP_RESULT EQUAL 0)
     message(FATAL_ERROR "Could not compress packaging/changelog")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS packaging/changelog)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/changelog.gz DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pipewire-configurator-simple)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/changelog.gz DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/pipewire-configurator)
 
 if(Qt6Test_FOUND)
     enable_testing()
@@ -79,14 +79,14 @@ endif()
 # Build the .deb on the Debian/Ubuntu release it is meant for and the .rpm on Fedora: the library
 # dependencies are taken from the system the package is built on.
 
-set(CPACK_PACKAGE_NAME "pipewire-configurator-simple")
+set(CPACK_PACKAGE_NAME "pipewire-configurator")
 set(CPACK_PACKAGE_VENDOR "Timon")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 set(CPACK_PACKAGE_CONTACT "Timon <timon2201@gmail.com>")
-set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/WhitePeace36/PipewireSimpleConfigurator")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/WhitePeace36/PipewireConfigurator")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "GUI tool for PipeWire and WirePlumber settings")
 set(CPACK_PACKAGE_DESCRIPTION
-    "Pipewire Simple Configurator sets the sample rates and buffer sizes of the\nPipeWire graph, resampling and channel mixing, per-device and Bluetooth\nsettings and per-application rules. It only writes its own drop-in files and\nleaves the rest of the PipeWire and WirePlumber configuration untouched.")
+    "Pipewire Configurator sets the sample rates and buffer sizes of the\nPipeWire graph, resampling and channel mixing, per-device and Bluetooth\nsettings and per-application rules. It only writes its own drop-in files and\nleaves the rest of the PipeWire and WirePlumber configuration untouched.")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_STRIP_FILES ON)
 set(CPACK_GENERATOR "DEB;RPM")
@@ -98,6 +98,9 @@ set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "pipewire, pipewire-bin, wireplumber, qt6-qpa-plugins")
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "pipewire-pulse, qt6-wayland")
 set(CPACK_DEBIAN_PACKAGE_SECTION "sound")
+# called pipewire-configurator-simple up to 2.0.x
+set(CPACK_DEBIAN_PACKAGE_CONFLICTS "pipewire-configurator-simple")
+set(CPACK_DEBIAN_PACKAGE_REPLACES "pipewire-configurator-simple")
 
 # Fedora / openSUSE. Library dependencies are added automatically by rpmbuild.
 # pipewire-utils provides pw-dump and pw-metadata.
@@ -107,6 +110,9 @@ set(CPACK_RPM_PACKAGE_RELEASE 1)
 set(CPACK_RPM_PACKAGE_DESCRIPTION "${CPACK_PACKAGE_DESCRIPTION}")
 set(CPACK_RPM_PACKAGE_REQUIRES "pipewire, pipewire-utils, wireplumber, qt6-qtbase-gui")
 set(CPACK_RPM_PACKAGE_SUGGESTS "pipewire-pulseaudio")
+# called pipewire-configurator-simple up to 2.0.x (Fedora's rule for renamed packages)
+set(CPACK_RPM_PACKAGE_OBSOLETES "pipewire-configurator-simple < ${PROJECT_VERSION}")
+set(CPACK_RPM_PACKAGE_PROVIDES "pipewire-configurator-simple = ${PROJECT_VERSION}")
 # These directories belong to the system (filesystem, hicolor-icon-theme); the package must not own them.
 set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
     /usr/share/applications

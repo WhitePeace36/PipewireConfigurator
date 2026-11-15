@@ -5,20 +5,24 @@
 #
 #   makepkg -si
 #
-# The finished package (pipewire-configurator-simple-<version>-<rel>-<arch>.pkg.tar.zst) is written
+# The finished package (pipewire-configurator-<version>-<rel>-<arch>.pkg.tar.zst) is written
 # to this directory. makepkg's working folders src/ and pkg/ are created here too and can be deleted.
 
-pkgname=pipewire-configurator-simple
-pkgver=2.0.1
+pkgname=pipewire-configurator
+pkgver=2.1.0
 pkgrel=1
 pkgdesc='GUI tool for PipeWire and WirePlumber settings'
 arch=('x86_64' 'aarch64')
-url='https://github.com/WhitePeace36/PipewireSimpleConfigurator'
+url='https://github.com/WhitePeace36/PipewireConfigurator'
 license=('GPL-2.0-only')
 depends=('qt6-base' 'pipewire' 'wireplumber' 'hicolor-icon-theme' 'glibc' 'gcc-libs')
 makedepends=('cmake')
 optdepends=('pipewire-pulse: settings for applications that use the PulseAudio API'
             'pipewire-jack: settings for JACK applications')
+# called pipewire-configurator-simple up to 2.0.x
+provides=('pipewire-configurator-simple')
+conflicts=('pipewire-configurator-simple')
+replaces=('pipewire-configurator-simple')
 
 build() {
   cmake -B build -S "$startdir" \

@@ -2,8 +2,8 @@
 Type=Application
 Name=Pipewire Configurator
 Comment=Configure PipeWire and WirePlumber
-Exec=SimplePipewireConfigurator
-Icon=SimplePipewireConfigurator
+Exec=pipewire-configurator
+Icon=pipewire-configurator
 Terminal=false
 Categories=AudioVideo;Audio;Mixer;
 Keywords=pipewire;wireplumber;audio;sound;latency;sample rate;bluetooth;

@@ -200,7 +200,52 @@ private slots:
     QVERIFY(old.includeClientRt);
     old.stream["resample.quality"] = "10";
     QCOMPARE(old.render().value(ConfigFile::ClientRt), old.render().value(ConfigFile::Client));
-    QVERIFY(p.ownFile(ConfigFile::ClientRt).endsWith("/pipewire/client-rt.conf.d/60-simple-configurator.conf"));
+    QVERIFY(p.ownFile(ConfigFile::ClientRt).endsWith("/pipewire/client-rt.conf.d/60-pipewire-configurator.conf"));
+  }
+
+  // Drop-ins saved by 2.0.x (60-simple-configurator.conf) are moved to the new name and stay ours.
+  void oldOwnFilesAreMigrated()
+  {
+    QTemporaryDir dir;
+    const ConfigPaths p = tempPaths(dir);
+    writeFile(p.oldOwnFile(ConfigFile::Pipewire), "context.properties = { default.clock.rate = 96000 }");
+    writeFile(p.oldOwnFile(ConfigFile::WirePlumber), "wireplumber.settings = { bluetooth.autoswitch-to-headset-profile = false }");
+
+    QVERIFY(p.migrateOldOwnFiles().isEmpty());
+    QVERIFY(!QFile::exists(p.oldOwnFile(ConfigFile::Pipewire)));
+    QVERIFY(!QFile::exists(p.oldOwnFile(ConfigFile::WirePlumber)));
+    QVERIFY(readFile(p.ownFile(ConfigFile::Pipewire)).contains("96000"));
+    QVERIFY(readFile(p.ownFile(ConfigFile::WirePlumber)).contains("autoswitch-to-headset-profile"));
+
+    // the moved file is ours again: loaded into the model, not reported as another drop-in
+    const ConfigModel m = ConfigModel::load(p);
+    QCOMPARE(m.graph.value("default.clock.rate").toString(), QStringLiteral("96000"));
+    const EffectiveConfig cfg = EffectiveConfig::load(p, ConfigFile::Pipewire);
+    QVERIFY(cfg.dropInsBefore.isEmpty() && cfg.dropInsAfter.isEmpty());
+
+    // nothing left to do on the next start
+    QVERIFY(p.migrateOldOwnFiles().isEmpty());
+    QVERIFY(readFile(p.ownFile(ConfigFile::Pipewire)).contains("96000"));
+  }
+
+  // Both names present (2.0.x ran again after the update): the new file wins, the old one is kept as a
+  // backup that PipeWire doesn't load.
+  void oldOwnFileNextToNewOneBecomesBackup()
+  {
+    QTemporaryDir dir;
+    const ConfigPaths p = tempPaths(dir);
+    writeFile(p.ownFile(ConfigFile::Pipewire), "context.properties = { default.clock.rate = 48000 }");
+    writeFile(p.oldOwnFile(ConfigFile::Pipewire), "context.properties = { default.clock.rate = 96000 }");
+
+    QVERIFY(p.migrateOldOwnFiles().isEmpty());
+    QVERIFY(!QFile::exists(p.oldOwnFile(ConfigFile::Pipewire)));
+    QVERIFY(readFile(p.ownFile(ConfigFile::Pipewire)).contains("48000"));
+    const QStringList left = QDir(QFileInfo(p.ownFile(ConfigFile::Pipewire)).absolutePath()).entryList(QDir::Files);
+    QCOMPARE(left.size(), 2);
+    QVERIFY(left.contains(ConfigPaths::ownFileName()));
+    const QString backup = left.at(left.indexOf(ConfigPaths::ownFileName()) == 0 ? 1 : 0);
+    QVERIFY2(backup.startsWith(ConfigPaths::oldOwnFileName() + ".bak-"), qPrintable(backup));
+    QVERIFY(!backup.endsWith(".conf"));
   }
 
   void quantumLimitReachesClients()

@@ -87,6 +87,28 @@ QString ConfigPaths::ownFile(ConfigFile f) const
   return userDir(f) + "/" + configFileName(f) + ".d/" + ownFileName();
 }
 
+QString ConfigPaths::oldOwnFile(ConfigFile f) const
+{
+  return userDir(f) + "/" + configFileName(f) + ".d/" + oldOwnFileName();
+}
+
+QStringList ConfigPaths::migrateOldOwnFiles() const
+{
+  QStringList problems;
+  for (ConfigFile f : allConfigFiles())
+  {
+    const QString oldPath = oldOwnFile(f);
+    if (!QFile::exists(oldPath))
+      continue;
+    const QString newPath = ownFile(f);
+    const bool newExists = QFile::exists(newPath);
+    const QString target = newExists ? backupPath(oldPath) : newPath;
+    if (!QFile::rename(oldPath, target))
+      problems.append(QStringLiteral("%1: could not rename it to %2").arg(oldPath, target));
+  }
+  return problems;
+}
+
 QString ConfigPaths::legacyUserCopy(ConfigFile f) const
 {
   return userDir(f) + "/" + configFileName(f);

@@ -348,7 +348,7 @@ private slots:
 
   void iconIsBuiltIn()
   {
-    QIcon icon(":/icons/SimplePipewireConfigurator.png");
+    QIcon icon(":/icons/pipewire-configurator.png");
     QVERIFY(!icon.isNull());
     QCOMPARE(icon.pixmap(256).size(), QSize(256, 256));
   }
