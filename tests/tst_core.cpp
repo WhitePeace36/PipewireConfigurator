@@ -381,7 +381,7 @@ private slots:
     QCOMPARE(gw.size(), 1);  // only the JACK note remains
     QVERIFY(gw.first().contains("JACK"));
 
-    QMap<QString, QString> bt = {{"bluez5.codecs", "[ aac ldac ]"}};
+    QMap<QString, QString> bt = {{"bluez5.codecs", "[ aac ldac msbc ]"}};  // SBC missing (mSBC: see msbcCheck)
     QCOMPARE(runChecks(Scope::BtGlobal, [&bt](const QString& k) { return bt.value(k); }, get).size(), 1);
 
     QCOMPARE(fractionToMs("480/48000"), 10.0);
@@ -511,6 +511,243 @@ private slots:
     // Lowest priority first, each directory once.
     QCOMPARE(p.systemWireplumberDirs, QStringList({"/usr/share/wireplumber", "/usr/local/share/wireplumber", "/etc/wireplumber", "/opt/cfg/wireplumber", "/etc/xdg/wireplumber"}));
     QCOMPARE(p.systemPipewireDirs, QStringList({"/usr/share/pipewire", "/etc/pipewire"}));
+  }
+
+  // Stream settings go to stream.properties, which replace what an application sets itself (intended:
+  // configured values win). node.latency is not written for the PulseAudio bridge, which ignores it.
+  void streamSettingsOverrideApplications()
+  {
+    QTemporaryDir dir;
+    const ConfigPaths p = tempPaths(dir);
+    ConfigModel m = ConfigModel::load(p);
+    m.stream["node.latency"] = "384/48000";
+    m.stream["dither.method"] = "triangular";
+    m.stream["resample.quality"] = "10";
+    m.stream["channelmix.upmix"] = "false";
+    saveModel(m, p);
+
+    const QVariantMap client = SpaJson::parseDocument(readFile(p.ownFile(ConfigFile::Client)));
+    QCOMPARE(client.value("stream.properties").toMap(),
+             QVariantMap({{"node.latency", "384/48000"}, {"dither.method", "triangular"}, {"resample.quality", "10"}, {"channelmix.upmix", "false"}}));
+    QVERIFY(!client.contains("stream.rules"));
+
+    const QVariantMap pulse = SpaJson::parseDocument(readFile(p.ownFile(ConfigFile::Pulse)));
+    QVERIFY(!pulse.value("stream.properties").toMap().contains("node.latency"));
+    QCOMPARE(pulse.value("stream.properties").toMap().value("resample.quality").toString(), QString("10"));
+
+    QSet<ConfigFile> outdated;
+    QStringList warnings;
+    const ConfigModel loaded = ConfigModel::load(p, &warnings, nullptr, &outdated);
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+    QVERIFY(outdated.isEmpty());
+    QCOMPARE(loaded.stream, m.stream);
+    QVERIFY(loaded == m);
+
+    // Only node.latency: nothing at all for the PulseAudio bridge.
+    ConfigModel latencyOnly = ConfigModel::load(p);
+    latencyOnly.stream = {{"node.latency", "512/48000"}};
+    QVERIFY(latencyOnly.render().value(ConfigFile::Pulse).isEmpty());
+  }
+
+  // Files written by 2.1.0 and earlier load with the same settings and are reported for rewriting.
+  void outdatedFilesAreDetected()
+  {
+    QTemporaryDir dir;
+    const ConfigPaths p = tempPaths(dir);
+    writeFile(p.ownFile(ConfigFile::Client), "stream.properties = { node.latency = 384/48000 resample.quality = 10 }");
+    writeFile(p.ownFile(ConfigFile::Pulse), "stream.properties = { node.latency = 384/48000 resample.quality = 10 }");
+    writeFile(p.ownFile(ConfigFile::WirePlumber),
+              "monitor.bluez.properties = { bluez5.codecs = [ sbc aac ] }\n"
+              "monitor.alsa.rules = [ { matches = [ { node.name = \"alsa_output.x\" } ] actions = { update-props = { audio.format = S24_3LE audio.rate = 96000 } } } ]");
+    QSet<ConfigFile> outdated;
+    QStringList warnings;
+    ConfigModel m = ConfigModel::load(p, &warnings, nullptr, &outdated);
+    QCOMPARE(outdated, QSet<ConfigFile>({ConfigFile::Pulse, ConfigFile::WirePlumber}));  // client.conf's layout is unchanged
+    QCOMPARE(m.stream.value("node.latency").toString(), QString("384/48000"));
+    QCOMPARE(m.bluez.value("bluez5.codecs").toStringList(), QStringList({"sbc", "aac"}));
+    // S24_3LE never worked: it is dropped (the device keeps its default format) and the user is told.
+    const Rule* r = ConfigModel::findRule(m.alsaRules, "node.name", "alsa_output.x");
+    QVERIFY(r && !r->props.contains("audio.format"));
+    QCOMPARE(r->props.value("audio.rate").toString(), QString("96000"));
+    QCOMPARE(warnings.size(), 1);
+    QVERIFY(warnings.first().contains("S24_3LE"));
+
+    saveModel(m, p);
+    outdated.clear();
+    const ConfigModel again = ConfigModel::load(p, nullptr, nullptr, &outdated);
+    QVERIFY(outdated.isEmpty());
+    QVERIFY(again == m);
+  }
+
+  // WirePlumber appends arrays from later files, so the codec and role lists are written with "override.".
+  void bluezListsReplaceOtherFiles()
+  {
+    QTemporaryDir dir;
+    const ConfigPaths p = tempPaths(dir);
+    writeFile(dir.path() + "/usr/share/wireplumber/wireplumber.conf.d/10-distro.conf", "monitor.bluez.properties = { bluez5.codecs = [ sbc aac ldac ] bluez5.enable-hw-volume = true }");
+    const EffectiveConfig before = EffectiveConfig::load(p, ConfigFile::WirePlumber);
+    QCOMPARE(SpaJson::toStringList(before.value("monitor.bluez.properties", "bluez5.codecs").value), QStringList({"sbc", "aac", "ldac"}));
+
+    ConfigModel m = ConfigModel::load(p);
+    m.bluez["bluez5.codecs"] = QStringList{"sbc"};
+    m.bluez["bluez5.roles"] = QStringList{"a2dp_source"};
+    m.bluez["bluez5.enable-msbc"] = "true";
+    const QString wp = m.render().value(ConfigFile::WirePlumber);
+    QVERIFY(wp.contains("override.bluez5.codecs = [ sbc ]"));
+    QVERIFY(wp.contains("override.bluez5.roles = [ a2dp_source ]"));
+    QVERIFY(wp.contains("\n    bluez5.enable-msbc = true"));
+    saveModel(m, p);
+    QSet<ConfigFile> outdated;
+    QVERIFY(ConfigModel::load(p, nullptr, nullptr, &outdated) == m);
+    QVERIFY(outdated.isEmpty());
+
+    // How EffectiveConfig merges: arrays of the same key are appended, "override.<key>" replaces.
+    writeFile(dir.path() + "/etc/wireplumber/wireplumber.conf.d/20-more.conf", "monitor.bluez.properties = { bluez5.codecs = [ aptx ] }");
+    QCOMPARE(SpaJson::toStringList(EffectiveConfig::load(p, ConfigFile::WirePlumber).value("monitor.bluez.properties", "bluez5.codecs").value),
+             QStringList({"sbc", "aac", "ldac", "aptx"}));
+    writeFile(dir.path() + "/etc/wireplumber/wireplumber.conf.d/20-more.conf", "monitor.bluez.properties = { override.bluez5.codecs = [ aptx ] }");
+    QCOMPARE(SpaJson::toStringList(EffectiveConfig::load(p, ConfigFile::WirePlumber).value("monitor.bluez.properties", "bluez5.codecs").value), QStringList({"aptx"}));
+  }
+
+  // Per-program settings for native PipeWire programs: stream.rules in client.conf.d after the global
+  // stream.properties, matching application.name or node.name.
+  void nativeAppRules()
+  {
+    QTemporaryDir dir;
+    const ConfigPaths p = tempPaths(dir);
+    ConfigModel m = ConfigModel::load(p);
+    m.stream["resample.quality"] = "10";
+    ConfigModel::findRule(m.nativeAppRules, "application.name", "mpv", true)->props["resample.quality"] = "14";
+    ConfigModel::findRule(m.nativeAppRules, "application.name", "gst-launch-1.0", true)->props["node.latency"] = "256/48000";
+    ConfigModel::findRule(m.nativeAppRules, "application.name", "empty", true);  // no settings: not written
+    saveModel(m, p);
+
+    const QString text = readFile(p.ownFile(ConfigFile::Client));
+    QVERIFY(text.indexOf("stream.properties") < text.indexOf("stream.rules"));  // rules come later and win
+    const QVariantList rules = SpaJson::parseDocument(text).value("stream.rules").toList();
+    QCOMPARE(rules.size(), 2);
+    const QVariantList matches = rules.first().toMap().value("matches").toList();
+    QCOMPARE(matches, QVariantList({QVariantMap({{"application.name", "mpv"}}), QVariantMap({{"node.name", "mpv"}})}));
+    QVERIFY(!readFile(p.ownFile(ConfigFile::Pulse)).contains("mpv"));
+
+    QStringList warnings;
+    const ConfigModel loaded = ConfigModel::load(p, &warnings);
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+    m.removeEmptyRules();
+    QCOMPARE(loaded.nativeAppRules.size(), 2);
+    QVERIFY(loaded == m);
+
+    // A rule the configurator did not write is reported, not taken over.
+    writeFile(p.ownFile(ConfigFile::Client), "stream.rules = [ { matches = [ { media.role = Music } ] actions = { update-props = { resample.quality = 1 } } } ]");
+    warnings.clear();
+    QVERIFY(ConfigModel::load(p, &warnings).nativeAppRules.isEmpty());
+    QCOMPARE(warnings.size(), 1);
+  }
+
+  void nativeClientsFromDump()
+  {
+    const QByteArray dump = R"([
+      {"id": 50, "type": "PipeWire:Interface:Client", "info": {"props": {"application.name": "pw-cat", "application.process.binary": "pw-cat"}}},
+      {"id": 51, "type": "PipeWire:Interface:Client", "info": {"props": {"application.name": "gst-launch-1.0", "application.process.binary": "gst-launch-1.0"}}},
+      {"id": 52, "type": "PipeWire:Interface:Client", "info": {"props": {"client.api": "pipewire-pulse", "application.name": "Firefox", "application.process.binary": "firefox"}}},
+      {"id": 53, "type": "PipeWire:Interface:Client", "info": {"props": {"application.name": "WirePlumber"}}},
+      {"id": 60, "type": "PipeWire:Interface:Node", "info": {"props": {"node.name": "pw-cat", "application.name": "pw-cat", "media.class": "Stream/Output/Audio", "client.id": 50}}},
+      {"id": 61, "type": "PipeWire:Interface:Node", "info": {"props": {"node.name": "gst-launch-1.0", "media.class": "Stream/Output/Audio", "client.id": 51}}},
+      {"id": 62, "type": "PipeWire:Interface:Node", "info": {"props": {"node.name": "firefox", "application.name": "Firefox", "media.class": "Stream/Output/Audio", "client.id": 52}}},
+      {"id": 63, "type": "PipeWire:Interface:Node", "info": {"props": {"node.name": "pw-cat", "application.name": "pw-cat", "media.class": "Stream/Input/Audio", "client.id": 50}}}
+    ])";
+    const LiveSnapshot s = LiveSnapshot::parse(dump);
+    QVERIFY2(s.valid, qPrintable(s.error));
+    QStringList names;
+    for (const LiveClient& c : s.nativeClients)
+      names.append(c.appName);
+    QCOMPARE(names, QStringList({"pw-cat", "gst-launch-1.0"}));  // no PulseAudio program, no client without a stream, no duplicates
+    QCOMPARE(s.nativeClients.first().binary, QString("pw-cat"));
+    QCOMPARE(s.pulseClients.size(), 1);
+  }
+
+  void msbcCheck()
+  {
+    auto warnings = [](const QMap<QString, QString>& v) { return runChecks(Scope::BtGlobal, [&](const QString& k) { return v.value(k); }, [](const QString&) { return QString(); }); };
+    auto mentionsMsbc = [](const QStringList& w) { return std::any_of(w.begin(), w.end(), [](const QString& s) { return s.contains("mSBC"); }); };
+    QVERIFY(mentionsMsbc(warnings({{"bluez5.codecs", "[ sbc aac ]"}})));
+    QVERIFY(mentionsMsbc(warnings({{"bluez5.codecs", "[ sbc aac ]"}, {"bluez5.enable-msbc", "true"}})));
+    QVERIFY(!mentionsMsbc(warnings({{"bluez5.codecs", "[ sbc aac ]"}, {"bluez5.enable-msbc", "false"}})));
+    QVERIFY(!mentionsMsbc(warnings({{"bluez5.codecs", "[ sbc msbc ]"}})));
+    QVERIFY(!mentionsMsbc(warnings({})));  // no list: every codec is allowed
+  }
+
+  // PipeWire's own context.properties.rules (e.g. on virtual machines) are applied after context.properties;
+  // the configurator repeats them with its values.
+  void graphRulesRepeatSystemRules()
+  {
+    QTemporaryDir dir;
+    const ConfigPaths p = tempPaths(dir);
+    writeFile(dir.path() + "/usr/share/pipewire/pipewire.conf",
+              "context.properties = { default.clock.rate = 48000 }\n"
+              "context.properties.rules = [ { matches = [ { cpu.vm.name = !null } ] actions = { update-props = { default.clock.min-quantum = 1024 } } } ]");
+    ConfigModel m = ConfigModel::load(p);
+    QCOMPARE(m.graphRulesElsewhere.size(), 1);
+    m.graph["default.clock.rate"] = "44100";
+    QVERIFY(!m.render().value(ConfigFile::Pipewire).contains("context.properties.rules"));  // the rule does not touch the rate
+    m.graph["default.clock.min-quantum"] = "64";
+    const QVariantMap doc = SpaJson::parseDocument(m.render().value(ConfigFile::Pipewire));
+    const QVariantMap rule = doc.value("context.properties.rules").toList().value(0).toMap();
+    QCOMPARE(rule.value("matches").toList().value(0).toMap().value("cpu.vm.name").toString(), QString("!null"));
+    QCOMPARE(rule.value("actions").toMap().value("update-props").toMap(), QVariantMap({{"default.clock.min-quantum", "64"}}));
+    QVERIFY(m.render().value(ConfigFile::Pipewire).contains("cpu.vm.name = !null"));  // written bare, as PipeWire expects
+    saveModel(m, p);
+    QVERIFY(ConfigModel::load(p) == m);
+  }
+
+  void deviceFormatChecks()
+  {
+    LiveNode n;
+    n.supportedFormats = {"S16P", "S16LE"};
+    n.supportedRates = {44100, 48000};
+    auto get = [](const QMap<QString, QString>& v) { return ValueGetter([v](const QString& k) { return v.value(k); }); };
+    QVERIFY(deviceChecks(&n, get({{"audio.format", "S16LE"}, {"audio.rate", "48000"}})).isEmpty());
+    QCOMPARE(deviceChecks(&n, get({{"audio.format", "S32LE"}})).size(), 1);
+    QVERIFY(deviceChecks(&n, get({{"audio.format", "S32LE"}})).first().contains("S16LE"));
+    QCOMPARE(deviceChecks(&n, get({{"audio.rate", "96000"}})).size(), 1);
+    QCOMPARE(deviceChecks(&n, get({{"audio.allowed-rates", "[ 44100 96000 ]"}})).size(), 1);
+    // Ranges.
+    LiveNode r;
+    r.minRate = 8000;
+    r.maxRate = 192000;
+    QVERIFY(deviceChecks(&r, get({{"audio.rate", "96000"}})).isEmpty());
+    QCOMPARE(deviceChecks(&r, get({{"audio.rate", "384000"}})).size(), 1);
+    // While a format is set, the device only reports that one: nothing to compare.
+    n.props.insert("audio.format", "S16LE");
+    QVERIFY(deviceChecks(&n, get({{"audio.format", "S32LE"}})).isEmpty());
+    // Device gone: hint at the likely reason only when a format or rate is set.
+    QCOMPARE(deviceChecks(nullptr, get({{"audio.format", "S32LE"}})).size(), 1);
+    QVERIFY(deviceChecks(nullptr, get({{"api.alsa.headroom", "1024"}})).isEmpty());
+  }
+
+  void enumFormatParsing()
+  {
+    const QByteArray dump = R"([
+      {"id": 1, "type": "PipeWire:Interface:Node", "info": {"state": "idle", "props": {"node.name": "hw", "media.class": "Audio/Sink", "device.api": "alsa"},
+        "params": {"EnumFormat": [{"format": {"default": "S32P", "alt1": "S32LE", "alt2": "S16LE"}, "rate": {"default": 44100, "min": 8000, "max": 768000}}]}}},
+      {"id": 2, "type": "PipeWire:Interface:Node", "info": {"state": "idle", "props": {"node.name": "fixed", "media.class": "Audio/Sink", "device.api": "alsa"},
+        "params": {"EnumFormat": [{"format": "S16LE", "rate": {"default": 48000, "alt1": 48000}}]}}},
+      {"id": 3, "type": "PipeWire:Interface:Node", "info": {"state": "idle", "props": {"node.name": "dsp", "media.class": "Audio/Sink", "device.api": "alsa"},
+        "params": {"EnumFormat": [{"format": {"default": "F32P", "alt1": "F32LE"}, "rate": {"default": 48000, "min": 1, "max": 2147483647}}]}}}
+    ])";
+    const LiveSnapshot s = LiveSnapshot::parse(dump);
+    QVERIFY2(s.valid, qPrintable(s.error));
+    QStringList formats = s.node("hw")->supportedFormats;
+    formats.sort();
+    QCOMPARE(formats, QStringList({"S16LE", "S32LE", "S32P"}));
+    QVERIFY(s.node("hw")->supportsRate(96000));
+    QVERIFY(!s.node("hw")->supportsRate(1536000));
+    QCOMPARE(s.node("fixed")->supportedFormats, QStringList({"S16LE"}));
+    QVERIFY(s.node("fixed")->supportsRate(48000));
+    QVERIFY(!s.node("fixed")->supportsRate(44100));
+    // The converter's side, not the hardware's: unknown.
+    QVERIFY(s.node("dsp")->supportedFormats.isEmpty());
+    QVERIFY(deviceChecks(s.node("dsp"), [](const QString& k) { return k == "audio.format" ? QString("S16LE") : QString(); }).isEmpty());
   }
 };
 

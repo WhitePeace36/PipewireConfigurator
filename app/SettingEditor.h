@@ -23,6 +23,8 @@ struct SettingBinding
   std::function<QString(const QString& key)> live;
   // Label for inherited values without a file, e.g. "Uses the global stream setting".
   QString inheritedLabel;
+  // Extra warnings for the section (e.g. against the running device), given the section's values.
+  std::function<QStringList(const std::function<QString(const QString& key)>& value)> checks;
 };
 
 // Editor widget for one value type. Values are QString for scalars and QStringList for lists.

@@ -259,6 +259,27 @@ private slots:
     QVERIFY(text.contains("quirks = [ block-source-volume ]"));
   }
 
+  // Native PipeWire programs: stream.rules in client.conf.d, matched on application.name or node.name.
+  void nativeApplicationRule()
+  {
+    MainWindow w(options());
+    w.show();
+    w.showPage("native:mpv");
+    SettingEditor* quality = editor(w, "resample.quality");
+    overrideBox(quality)->click();
+    setText(quality, "14");
+    QVERIFY(editor(w, "node.latency"));  // the full Streams settings
+    button(w, "Save")->click();
+    const QString text = readFile(ownFile(ConfigFile::Client));
+    QVERIFY2(text.contains("{ application.name = \"mpv\" }") && text.contains("{ node.name = \"mpv\" }"), qPrintable(text));
+    QVERIFY(text.contains("resample.quality = 14"));
+    QVERIFY(readFile(ownFile(ConfigFile::Pulse)).isEmpty() || !readFile(ownFile(ConfigFile::Pulse)).contains("mpv"));
+
+    button(w, "Remove this application")->click();
+    button(w, "Save")->click();
+    QVERIFY(!readFile(ownFile(ConfigFile::Client)).contains("mpv"));
+  }
+
   void untickRemovesSettingsAndFiles()
   {
     MainWindow w(options());
@@ -442,6 +463,32 @@ private slots:
     const QStringList backups = QFileInfo(wpFile).dir().entryList({"*.bak-*"}, QDir::Files);
     QCOMPARE(backups.size(), 1);
     QCOMPARE(readFile(QFileInfo(wpFile).dir().filePath(backups.first())).toUtf8(), broken);
+  }
+
+  // Files from 2.1.0 and earlier keep their settings but count as unsaved, so Save rewrites them.
+  void outdatedFilesAreRewrittenOnSave()
+  {
+    QTemporaryDir dir;
+    MainWindow::Options o = options();
+    o.paths.userConfigHome = dir.path() + "/config";
+    // 2.1.0 also wrote node.latency for the PulseAudio bridge, where it has no effect.
+    const QString pulse = o.paths.ownFile(ConfigFile::Pulse);
+    QDir().mkpath(QFileInfo(pulse).absolutePath());
+    {
+      QFile f(pulse);
+      QVERIFY(f.open(QIODevice::WriteOnly));
+      f.write("stream.properties = { node.latency = 384/48000 resample.quality = 10 }\n");
+    }
+
+    MainWindow w(o);
+    w.show();
+    QVERIFY(button(w, "Save")->isEnabled());
+    QVERIFY(anyVisibleLabelContains(w, "older version"));
+    button(w, "Save")->click();
+    QVERIFY(!readFile(pulse).contains("node.latency"));
+    QVERIFY(readFile(pulse).contains("resample.quality = 10"));
+    QVERIFY(readFile(o.paths.ownFile(ConfigFile::Client)).contains("node.latency = 384/48000"));  // kept for native applications
+    QVERIFY(!button(w, "Save")->isEnabled());
   }
 };
 

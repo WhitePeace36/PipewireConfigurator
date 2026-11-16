@@ -197,8 +197,17 @@ void MainWindow::reloadFromDisk()
   m_unreadable.clear();
   // before loading: an old drop-in that keeps its name would count as someone else's file
   m_loadWarnings += m_paths.migrateOldOwnFiles();
-  m_model = ConfigModel::load(m_paths, &m_loadWarnings, &m_unreadable);
+  QSet<ConfigFile> outdated;
+  m_model = ConfigModel::load(m_paths, &m_loadWarnings, &m_unreadable, &outdated);
   m_baseline = m_model.render();
+  // Files in an older layout: a baseline that never equals a rendered file makes them unsaved, so
+  // Save rewrites them.
+  QStringList outdatedFiles;
+  for (ConfigFile f : outdated)
+  {
+    m_baseline[f] = QStringLiteral("\x01outdated");
+    outdatedFiles.append(m_paths.ownFile(f));
+  }
   for (ConfigFile f : allConfigFiles())
   {
     m_effective[f] = EffectiveConfig::load(m_paths, f);
@@ -214,10 +223,14 @@ void MainWindow::reloadFromDisk()
                           .arg(names.join(", "), m_paths.userDir(ConfigFile::Pipewire).toHtmlEscaped()));
   m_legacyBanner->setVisible(!legacy.files.isEmpty());
 
-  setWindowModified(false);
+  setWindowModified(isDirty());  // outdated files count as unsaved
   updateButtons();
   if (!m_loadWarnings.isEmpty())
     setStatus(m_loadWarnings.join("\n"), true);
+  else if (!outdatedFiles.isEmpty())
+    setStatus(tr("%1 were saved by an older version, in a form where some settings do not work as intended "
+                 "(for example, Bluetooth codec lists were merged with other files' lists). Save and Apply to update them; the settings stay the same.")
+                .arg(outdatedFiles.join(", ")));
 }
 
 void MainWindow::onModelChanged()
@@ -472,6 +485,8 @@ void MainWindow::rebuildTree()
   QTreeWidgetItem* apps = addItem(nullptr, "apps", tr("Applications"), "applications-multimedia");
   for (const Rule& r : m_model.appRules)
     addItem(apps, "app:" + r.matchValue, r.matchValue, "application-x-executable");
+  for (const Rule& r : m_model.nativeAppRules)
+    addItem(apps, "native:" + r.matchValue, tr("%1 (PipeWire)").arg(r.matchValue), "application-x-executable");
   apps->setExpanded(true);
 
   QTreeWidgetItem* files = addItem(nullptr, "files", tr("Config files"), "document-properties");
@@ -495,6 +510,12 @@ void MainWindow::showPage(const QString& id)
   if (id.startsWith("app:") && !ConfigModel::findRule(m_model.appRules, "application.process.binary", id.mid(4)))
   {
     m_model.appRules.append({"application.process.binary", id.mid(4), {}});
+    m_currentId = id;
+    rebuildTree();
+  }
+  if (id.startsWith("native:") && !ConfigModel::findRule(m_model.nativeAppRules, "application.name", id.mid(7)))
+  {
+    m_model.nativeAppRules.append({"application.name", id.mid(7), {}});
     m_currentId = id;
     rebuildTree();
   }
@@ -535,6 +556,8 @@ void MainWindow::rebuildPage()
     page = buildAppsPage();
   else if (id.startsWith("app:"))
     page = buildAppPage(id.mid(4));
+  else if (id.startsWith("native:"))
+    page = buildNativeAppPage(id.mid(7));
   else
     page = buildFilesPage();
 
@@ -738,9 +761,12 @@ SettingsPage* MainWindow::buildGraphPage()
 SettingsPage* MainWindow::buildStreamPage()
 {
   auto* page =
-    new SettingsPage(tr("Streams"), tr("Defaults for every application stream. Saved to %1 (native PipeWire applications) and %2 (applications using the PulseAudio API).")
+    new SettingsPage(tr("Streams"), tr("Settings for every application stream. Saved to %1 (native PipeWire applications) and %2 (applications using the PulseAudio API).")
                                       .arg(mono(m_paths.ownFile(ConfigFile::Client)), mono(m_paths.ownFile(ConfigFile::Pulse))));
-  page->addNotice(tr("Native PipeWire applications read these settings when they start, so restart them after applying."));
+  page->addNotice(tr("Native PipeWire applications read these settings when they start, so restart them after applying. A setting ticked here "
+                     "replaces what an application chooses itself."));
+  page->addNotice(tr("The requested latency only reaches native PipeWire applications. Applications using the PulseAudio API always ask for a "
+                     "buffer size, which the PulseAudio bridge page (default request) and the Applications pages control."));
   if (m_paths.hasClientRt())
     page->addNotice(tr("Your PipeWire still has client-rt.conf (before PipeWire 1.4), which realtime applications read instead of client.conf, "
                        "so these settings are written to %1 too.")
@@ -828,7 +854,17 @@ SettingsPage* MainWindow::buildAlsaPage(const QString& nodeName)
     static_cast<QHBoxLayout*>(page->actionArea()->layout())->addStretch();
   }
 
-  page->addSection(Scope::AlsaNode, ruleBinding(&ConfigModel::alsaRules, "node.name", nodeName, [this, nodeName] { return m_live->snapshot().node(nodeName); }));
+  SettingBinding device = ruleBinding(&ConfigModel::alsaRules, "node.name", nodeName, [this, nodeName] { return m_live->snapshot().node(nodeName); });
+  // Only values set here are checked against the device (not the format it runs with now).
+  device.checks = [this, nodeName](const std::function<QString(const QString&)>&)
+  {
+    if (!m_live->snapshot().valid)
+      return QStringList();  // nothing known about the running devices
+    const Rule* r = ConfigModel::findRule(m_model.alsaRules, "node.name", nodeName);
+    const ValueGetter set = [r](const QString& k) { return r ? valueText(r->props.value(k)) : QString(); };
+    return deviceChecks(m_live->snapshot().node(nodeName), set);
+  };
+  page->addSection(Scope::AlsaNode, device);
   if (!m_wpSupported)
   {
     for (QWidget* w : page->findChildren<SettingEditor*>())
@@ -915,62 +951,70 @@ SettingsPage* MainWindow::buildBtDevicePage(const QString& address)
 
 SettingsPage* MainWindow::buildAppsPage()
 {
-  auto* page =
-    new SettingsPage(tr("Applications"), tr("Settings for one application, for example a lower latency for a game or blocking an app from changing your microphone volume. "
-                                            "They apply to applications that use the PulseAudio API, which includes most desktop applications such as Firefox, Chrome, "
-                                            "Discord and Spotify. Saved to %1.")
-                                           .arg(mono(m_paths.ownFile(ConfigFile::Pulse))));
+  auto* page = new SettingsPage(
+    tr("Applications"),
+    tr("Settings for one application, for example a lower latency for a game or blocking an app from changing your microphone volume. They replace the "
+       "settings of the Streams and PulseAudio bridge pages and what the application asks for itself. Applications using the PulseAudio API (most desktop "
+       "applications such as Firefox, Chrome, Discord and Spotify) are saved to %1, native PipeWire applications to %2.")
+      .arg(mono(m_paths.ownFile(ConfigFile::Pulse)), mono(m_paths.ownFile(ConfigFile::Client))));
 
-  auto* row = new QWidget(page);
-  auto* l = new QHBoxLayout(row);
-  l->setContentsMargins(0, 0, 0, 0);
-  l->addWidget(new QLabel(tr("Program:"), row));
-  auto* combo = new QComboBox(row);
-  combo->setEditable(true);
-  combo->setMinimumWidth(260);
-  combo->lineEdit()->setPlaceholderText(tr("process name, e.g. firefox"));
-  QStringList running;
+  // One "Program: [combo] Add" row. |running| holds (value, label) of connected programs.
+  auto addRow = [this, page](const QString& label, const QString& placeholder, const QList<QPair<QString, QString>>& running, const QString& idPrefix)
+  {
+    auto* row = new QWidget(page);
+    auto* l = new QHBoxLayout(row);
+    l->setContentsMargins(0, 0, 0, 0);
+    l->addWidget(new QLabel(label, row));
+    auto* combo = new QComboBox(row);
+    combo->setEditable(true);
+    combo->setMinimumWidth(260);
+    combo->lineEdit()->setPlaceholderText(placeholder);
+    for (const auto& r : running)
+      combo->addItem(r.second, r.first);
+    combo->setCurrentIndex(-1);
+    l->addWidget(combo);
+    auto* add = new QPushButton(QIcon::fromTheme("list-add"), tr("Add"), row);
+    l->addWidget(add);
+    l->addStretch();
+    connect(add, &QPushButton::clicked, this,
+            [this, combo, idPrefix]
+            {
+              QString name = combo->currentData().toString();
+              if (name.isEmpty() || combo->currentText() != combo->itemText(combo->currentIndex()))
+                name = combo->currentText().trimmed();
+              if (name.isEmpty())
+                return;
+              // showPage() creates the (still empty) rule; it is saved with the first setting.
+              showPage(idPrefix + name);
+            });
+    page->addWidget(row);
+  };
+
+  QList<QPair<QString, QString>> pulseRunning, nativeRunning;
   for (const LiveClient& c : m_live->snapshot().pulseClients)
   {
-    if (!running.contains(c.binary))
-    {
-      running.append(c.binary);
-      combo->addItem(c.appName.isEmpty() || c.appName == c.binary ? c.binary : QStringLiteral("%1 (%2)").arg(c.binary, c.appName), c.binary);
-    }
+    if (std::none_of(pulseRunning.begin(), pulseRunning.end(), [&](const auto& r) { return r.first == c.binary; }))
+      pulseRunning.append({c.binary, c.appName.isEmpty() || c.appName == c.binary ? c.binary : QStringLiteral("%1 (%2)").arg(c.binary, c.appName)});
   }
-  combo->setCurrentIndex(-1);
-  l->addWidget(combo);
-  auto* add = new QPushButton(QIcon::fromTheme("list-add"), tr("Add"), row);
-  l->addWidget(add);
-  l->addStretch();
-  connect(add, &QPushButton::clicked, this,
-          [this, combo]
-          {
-            QString binary = combo->currentData().toString();
-            if (binary.isEmpty() || combo->currentText() != combo->itemText(combo->currentIndex()))
-              binary = combo->currentText().trimmed();
-            if (binary.isEmpty())
-              return;
-            // The rule is created with the first setting; until then the page just shows the program.
-            if (!ConfigModel::findRule(m_model.appRules, "application.process.binary", binary))
-              m_model.appRules.append({"application.process.binary", binary, {}});
-            rebuildTree();
-            showPage("app:" + binary);
-          });
-  page->addWidget(row);
-  if (!running.isEmpty())
+  for (const LiveClient& c : m_live->snapshot().nativeClients)
+    nativeRunning.append({c.appName, c.binary.isEmpty() || c.binary == c.appName ? c.appName : QStringLiteral("%1 (%2)").arg(c.appName, c.binary)});
+
+  addRow(tr("PulseAudio program:"), tr("process name, e.g. firefox"), pulseRunning, "app:");
+  addRow(tr("PipeWire program:"), tr("application name, e.g. mpv"), nativeRunning, "native:");
+  if (!pulseRunning.isEmpty() || !nativeRunning.isEmpty())
+    page->addWidget(new QLabel(tr("The lists show programs that are playing or recording right now."), page));
+
+  auto addButton = [this, page](const QString& text, const QString& id)
   {
-    auto* hint = new QLabel(tr("The list shows programs that are connected right now."), page);
-    page->addWidget(hint);
-  }
-  for (const Rule& r : m_model.appRules)
-  {
-    auto* b = new QPushButton(r.matchValue, page);
+    auto* b = new QPushButton(text, page);
     b->setStyleSheet("text-align: left; padding: 8px;");
-    const QString id = "app:" + r.matchValue;
     connect(b, &QPushButton::clicked, this, [this, id] { showPage(id); });
     page->addWidget(b);
-  }
+  };
+  for (const Rule& r : m_model.appRules)
+    addButton(r.matchValue, "app:" + r.matchValue);
+  for (const Rule& r : m_model.nativeAppRules)
+    addButton(tr("%1 (PipeWire)").arg(r.matchValue), "native:" + r.matchValue);
   return page;
 }
 
@@ -1001,6 +1045,36 @@ SettingsPage* MainWindow::buildAppPage(const QString& binary)
   };
   b.inheritedLabel = tr("Not set; the application uses the global setting.");
   page->addSection(Scope::App, b);
+  return page;
+}
+
+SettingsPage* MainWindow::buildNativeAppPage(const QString& name)
+{
+  auto* page = new SettingsPage(name, tr("Applies to the streams of a native PipeWire program whose application name (or stream node name) is %1. "
+                                         "These settings replace the Streams page and what the program asks for itself. Saved to %2.")
+                                        .arg(mono(name), mono(m_paths.ownFile(ConfigFile::Client))));
+  page->addNotice(tr("The program reads these settings when it starts, so restart it after applying."));
+  auto* remove = new QPushButton(QIcon::fromTheme("edit-delete"), tr("Remove this application"), page);
+  connect(remove, &QPushButton::clicked, this,
+          [this, name]
+          {
+            m_model.nativeAppRules.removeIf([&](const Rule& r) { return r.matchValue == name; });
+            onModelChanged();
+            rebuildTree();
+            showPage("apps");
+          });
+  page->actionArea()->layout()->addWidget(remove);
+  static_cast<QHBoxLayout*>(page->actionArea()->layout())->addStretch();
+
+  SettingBinding b = ruleBinding(&ConfigModel::nativeAppRules, "application.name", name, nullptr);
+  b.inherited = [this](const QString& key) -> ValueOrigin
+  {
+    if (m_model.stream.contains(key))
+      return {m_model.stream.value(key), tr("the Streams page")};
+    return m_effective.value(ConfigFile::Client).value("stream.properties", key);
+  };
+  b.inheritedLabel = tr("Not set; the application uses the global setting.");
+  page->addSection(Scope::Stream, b);
   return page;
 }
 

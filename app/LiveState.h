@@ -32,6 +32,13 @@ struct LiveNode
   int channels = 0;
   QVariantMap props;          // node properties
   QVariantMap adapterValues;  // current audioconvert values (resample.quality, channelmix.* ...)
+  // What the device reports it can be opened with (EnumFormat). Narrowed by audio.format, audio.rate and
+  // audio.allowed-rates when those are set. Empty when unknown.
+  QStringList supportedFormats;
+  QList<int> supportedRates;  // discrete rates; otherwise a range in minRate..maxRate
+  int minRate = 0;
+  int maxRate = 0;
+  bool supportsRate(int rate) const;
 
   bool isOutput() const { return kind == AlsaOutput || kind == BtOutput; }
   // Value of a node or adapter property as currently in effect.
@@ -63,6 +70,9 @@ struct LiveSnapshot
   QList<LiveNode> nodes;
   QList<LiveDevice> devices;
   QList<LiveClient> pulseClients;
+  // Native PipeWire programs playing or recording now; appName is the name their rules match
+  // (application.name of the stream, or its node.name), binary the process name if known.
+  QList<LiveClient> nativeClients;
   QString defaultSink;    // node.name of the current default output
   QString defaultSource;  // node.name of the current default input
   QVariantMap settings;   // "settings" metadata: clock.rate, clock.quantum, clock.force-rate, ...

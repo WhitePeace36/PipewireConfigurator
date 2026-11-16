@@ -1,3 +1,27 @@
+pipewire-configurator (2.2.0) unstable; urgency=medium
+
+  * The requested latency is no longer written for the PulseAudio bridge,
+    where it had no effect; the Streams page explains where to set it.
+    Stream settings replace what applications choose themselves, and the
+    help texts now say so.
+  * Per-program settings for native PipeWire programs (Applications page,
+    "PipeWire program"): all Streams settings, saved as stream.rules in
+    client.conf.d. They replace the Streams page and the program's choice.
+  * Graph settings also apply where PipeWire's own rules change them, for
+    example the minimum quantum of 1024 on virtual machines.
+  * Bluetooth codec and role lists replace the lists of other configuration
+    files instead of being merged with them. mSBC and LC3-SWB can be chosen
+    in the codec list, and a warning shows when mSBC is left out of it. The
+    LC3 entry is gone: LE Audio is switched with the LE Audio roles.
+  * Device pages warn when the device cannot be opened with the chosen
+    sample format or rate, and explain a device that disappeared.
+  * Sample formats: 24 bit in 32 is S24_32LE, packed 24 bit is S24LE.
+    S24_3LE, which PipeWire does not know, is removed from saved settings.
+  * Files saved by earlier versions are shown as unsaved changes with an
+    explanation; saving rewrites them, the settings stay the same.
+
+ -- Timon <timon2201@gmail.com>  Mon, 16 Nov 2026 19:34:42 +0100
+
 pipewire-configurator (2.1.0) unstable; urgency=medium
 
   * Renamed to Pipewire Configurator: package pipewire-configurator (replaces

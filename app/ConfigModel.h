@@ -36,15 +36,28 @@ public:
   QList<Rule> alsaRules;         // monitor.alsa.rules  (node.name)
   QList<Rule> bluezRules;        // monitor.bluez.rules (device.name / node.name)
   QList<Rule> appRules;          // pulse.rules + stream.rules in pipewire-pulse.conf.d (application.process.binary)
+  // Native PipeWire programs: stream.rules in client.conf.d. matchKey is "application.name"; the rule also
+  // matches node.name, because some libraries (e.g. GStreamer) put the program name only there.
+  QList<Rule> nativeAppRules;
   bool includeClientRt = false;  // also write stream settings to client-rt.conf.d (PipeWire < 1.4)
 
+  // Taken from the rest of the configuration by load(), not saved state: context.properties.rules of PipeWire's own config (e.g. min-quantum 1024 on virtual machines). Rules are
+  // applied after context.properties, so the graph keys they set are repeated in a rule with the same matches.
+  QVariantList graphRulesElsewhere;
+
   // Reads the tool's own drop-ins. Problems (e.g. hand edits that do not parse) go to |warnings|, and
-  // the files that could not be parsed (and are therefore ignored) to |unreadable|.
-  static ConfigModel load(const ConfigPaths& paths, QStringList* warnings = nullptr, QSet<ConfigFile>* unreadable = nullptr);
+  // the files that could not be parsed (and are therefore ignored) to |unreadable|. Files written by an
+  // older version in a layout that no longer works as intended go to |outdated|; they should be rewritten.
+  static ConfigModel load(const ConfigPaths& paths, QStringList* warnings = nullptr, QSet<ConfigFile>* unreadable = nullptr, QSet<ConfigFile>* outdated = nullptr);
 
   // Graph settings that clients read from their own context.properties as well. Clients size some
   // buffers from their own config (e.g. pw_filter, port defaults), so a raised limit must reach them too.
   static const QStringList& clientContextKeys();
+  // Stream settings that the PulseAudio bridge always sets itself, so writing them there has no effect.
+  static const QStringList& pulseIgnoredStreamKeys();
+  // WirePlumber appends arrays from later files to earlier ones; these keys are written as
+  // "override.<key>" so the list replaces what other files allow.
+  static const QStringList& wpReplacedListKeys();
 
   // File contents for every drop-in; an empty string means the file should not exist.
   QMap<ConfigFile, QString> render() const;

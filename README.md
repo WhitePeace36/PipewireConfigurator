@@ -9,11 +9,11 @@ A GUI for the PipeWire and WirePlumber settings you would otherwise edit by hand
 | Page | What | Written to |
 | --- | --- | --- |
 | **Graph** | Default and allowed sample rates, quantum (buffer size) settings, power-of-two rounding. The quantum limit is also written to the client configs, because applications size some of their own buffers from it. A *Try now* button applies rate and quantum to the running graph without saving. | `pipewire.conf.d` (quantum limit also in `client.conf.d`, `pipewire-pulse.conf.d`, `jack.conf.d`) |
-| **Streams** | Defaults for every application stream: requested latency, forced rate, resampler, channel mixing, dither, filter graphs | `client.conf.d`, `pipewire-pulse.conf.d` (and `client-rt.conf.d` on PipeWire before 1.4) |
+| **Streams** | Settings for every application stream: requested latency, forced rate, resampler, channel mixing, dither, filter graphs. They replace what an application chooses itself. The requested latency only reaches native PipeWire applications; PulseAudio applications use the PulseAudio bridge buffer sizes | `client.conf.d`, `pipewire-pulse.conf.d` (and `client-rt.conf.d` on PipeWire before 1.4) |
 | **PulseAudio bridge** | Buffer sizes for applications that use the PulseAudio API | `pipewire-pulse.conf.d` |
-| **Output / input devices** | Per sound card output or input: fixed or allowed rates, sample format, ALSA period size and headroom, suspend timeout, display name, default priority, resampler and channel mixing | WirePlumber `monitor.alsa.rules` |
-| **Bluetooth** | Allowed codecs, SBC-XQ, mSBC, codec sample rate, profiles (roles), hardware volume, automatic switch to the headset profile; per headphone: LDAC quality, AAC bitrate mode, and settings for its playback and microphone nodes | WirePlumber `monitor.bluez.*`, `wireplumber.settings` |
-| **Applications** | Per program (matched by process name): latency, resampler quality, upmixing, PulseAudio buffer sizes and quirks such as "block microphone volume changes" | `pipewire-pulse.conf.d` (`pulse.rules`, `stream.rules`) |
+| **Output / input devices** | Per sound card output or input: fixed or allowed rates, sample format, ALSA period size and headroom, suspend timeout, display name, default priority, resampler and channel mixing. Warns when the device reports that it cannot use the chosen format or rate | WirePlumber `monitor.alsa.rules` |
+| **Bluetooth** | Allowed codecs (they replace, not extend, codec lists from other files; LE Audio is switched with the roles), SBC-XQ, mSBC, codec sample rate, profiles (roles), hardware volume, automatic switch to the headset profile; per headphone: LDAC quality, AAC bitrate mode, and settings for its playback and microphone nodes | WirePlumber `monitor.bluez.*`, `wireplumber.settings` |
+| **Applications** | Per program, replacing the Streams and PulseAudio bridge settings and what the program asks for itself. PulseAudio programs (matched by process name): latency, resampler quality, upmixing, PulseAudio buffer sizes and quirks such as "block microphone volume changes". Native PipeWire programs (matched by application name or stream node name): all Streams settings | `pipewire-pulse.conf.d` (`pulse.rules`, `stream.rules`), `client.conf.d` (`stream.rules`) |
 
 Every setting has a check box. Ticked means the configurator writes the value, even if it equals today's default, so a later PipeWire update cannot change it behind your back. Unticked means the configurator leaves it alone; the page then shows the value that applies anyway and where it comes from (a config file, the running device, or PipeWire's default).
 
@@ -35,6 +35,15 @@ The configurator only writes its own drop-in files:
 PipeWire loads exactly one main file per config (the first it finds in `~/.config/pipewire`, `/etc/pipewire`, `/usr/share/pipewire`), then merges the drop-ins from all three `*.conf.d` folders on top: `/usr/share` first, then `/etc`, then `~/.config`, alphabetically within each folder. Later drop-ins override single keys of earlier ones, and lists such as rules are appended. So PipeWire and WirePlumber load these files on top of their normal configuration, so your other config files are never changed and PipeWire updates to the main files keep working. To undo everything, delete these files (or use *Remove all configurator settings* on the *Config files* page). Drop-ins in `~/.config` that sort after `60-pipewire-configurator.conf` are loaded later and win; the configurator shows a warning on every setting they override.
 
 **Save** writes the files. **Save and Apply** also restarts only the services that read the changed files (`pipewire`, `pipewire-pulse`, `wireplumber`). Native PipeWire applications read stream settings when they start, so restart them afterwards.
+
+### How some settings are written
+
+- Per-program settings for native PipeWire programs are `stream.rules` in `client.conf.d` that match `application.name` or `node.name` (GStreamer, for example, only sets the latter on its streams). PipeWire applies them after `stream.properties`, so they win over the Streams page.
+- Stream settings are written to `stream.properties`, which replace what an application sets itself, so the configured values always win. `node.latency` is not written for the PulseAudio bridge, which always sets it from the client's buffer sizes.
+- When PipeWire's own `pipewire.conf` changes a graph setting with `context.properties.rules` (for example `default.clock.min-quantum = 1024` on virtual machines), the configurator repeats that rule with its own value, because these rules are applied after `context.properties`.
+- WirePlumber appends lists from later files to earlier ones, so the Bluetooth codec and role lists are written as `override.bluez5.codecs` and `override.bluez5.roles`.
+
+Files saved by 2.1.0 and earlier still load with all their settings; the configurator shows them as unsaved changes, and saving writes them in this form.
 
 ### Upgrading from version 2.0
 

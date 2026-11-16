@@ -44,7 +44,10 @@ QStringList orderedKeys(const Values& values)
   return ordered;
 }
 
-QString formatValues(const Values& values, int indent, const QStringList& skip = {})
+const QString kOverride = QStringLiteral("override.");
+
+// |overrideKeys| are written as "override.<key>" (WirePlumber: replace instead of append).
+QString formatValues(const Values& values, int indent, const QStringList& skip = {}, const QStringList& overrideKeys = {})
 {
   QString out;
   const QString pad(indent, ' ');
@@ -63,16 +66,49 @@ QString formatValues(const Values& values, int indent, const QStringList& skip =
       text = quoted(v.toString());  // free text, e.g. a display name
     else
       text = SpaJson::formatScalar(v.toString());
-    out += pad + SpaJson::formatScalar(key) + " = " + text + "\n";
+    out += pad + SpaJson::formatScalar(overrideKeys.contains(key) ? kOverride + key : key) + " = " + text + "\n";
   }
   return out;
 }
 
-QString section(const QString& name, const Values& values)
+QString section(const QString& name, const Values& values, const QStringList& overrideKeys = {})
 {
   if (values.isEmpty())
     return {};
-  return "\n" + name + " = {\n" + formatValues(values, 4) + "}\n";
+  return "\n" + name + " = {\n" + formatValues(values, 4, {}, overrideKeys) + "}\n";
+}
+
+
+// Repeats graph settings for PipeWire's own context.properties.rules (applied after context.properties),
+// with the same matches, so the configurator's values still win when such a rule applies.
+QString graphRules(const Values& graph, const QVariantList& systemRules)
+{
+  QString body;
+  for (const QVariant& r : systemRules)
+  {
+    const QVariantMap rule = r.toMap();
+    const QVariantMap props = rule.value("actions").toMap().value("update-props").toMap();
+    Values ours;
+    for (auto it = props.begin(); it != props.end(); ++it)
+    {
+      if (graph.contains(it.key()))
+        ours.insert(it.key(), graph.value(it.key()));
+    }
+    if (ours.isEmpty() || !rule.contains("matches"))
+      continue;
+    body += "    {\n";
+    body += "        matches = " + SpaJson::formatValue(rule.value("matches"), 8) + "\n";
+    body += "        actions = {\n";
+    body += "            update-props = {\n" + formatValues(ours, 16) + "            }\n";
+    body += "        }\n";
+    body += "    }\n";
+  }
+  if (body.isEmpty())
+    return {};
+  return "\n# PipeWire's own configuration changes these settings in some cases (for example on virtual machines).\n"
+         "# The same rules are repeated here so the values above still apply.\n"
+         "context.properties.rules = [\n" +
+         body + "]\n";
 }
 
 // Which update-props of an application rule go where: pipewire-pulse reads pulse.* settings and quirks
@@ -90,7 +126,8 @@ bool isPulseKey(const QString& key)
   return key.startsWith("pulse.") || key == "quirks";
 }
 
-QString rules(const QString& name, const QList<Rule>& list, bool withQuirks, RuleKeys which = RuleKeys::All)
+// |alsoMatch|: further keys that match the same value; the alternatives are ORed by PipeWire.
+QString rules(const QString& name, const QList<Rule>& list, bool withQuirks, RuleKeys which = RuleKeys::All, const QStringList& alsoMatch = {})
 {
   QString body;
   for (const Rule& r : list)
@@ -108,6 +145,8 @@ QString rules(const QString& name, const QList<Rule>& list, bool withQuirks, Rul
     body += "    {\n";
     body += "        matches = [\n";
     body += "            { " + SpaJson::formatScalar(r.matchKey) + " = " + quoted(r.matchValue) + " }\n";
+    for (const QString& k : alsoMatch)
+      body += "            { " + SpaJson::formatScalar(k) + " = " + quoted(r.matchValue) + " }\n";
     body += "        ]\n";
     body += "        actions = {\n";
     if (!props.isEmpty())
@@ -138,12 +177,14 @@ Values toValues(const QVariant& v)
   const QVariantMap map = v.toMap();
   for (auto it = map.begin(); it != map.end(); ++it)
   {
+    // "override.<key>" (WirePlumber) is the same setting; render() adds the prefix again where needed.
+    const QString key = it.key().startsWith(kOverride) ? it.key().mid(kOverride.size()) : it.key();
     if (it->typeId() == QMetaType::QVariantList && !containsObjects(it->toList()))
-      out.insert(it.key(), SpaJson::toStringList(*it));
+      out.insert(key, SpaJson::toStringList(*it));
     else if (it->typeId() == QMetaType::QVariantList || it->typeId() == QMetaType::QVariantMap)
-      out.insert(it.key(), *it);  // nested objects (hand edits) are kept as parsed and written back as such
+      out.insert(key, *it);  // nested objects (hand edits) are kept as parsed and written back as such
     else
-      out.insert(it.key(), it->toString());
+      out.insert(key, it->toString());
   }
   return out;
 }
@@ -179,6 +220,42 @@ QList<Rule> toRules(const QVariant& v, QStringList* warnings, const QString& fil
   return out;
 }
 
+const QString kNativeKey = QStringLiteral("application.name");
+const QStringList kNativeAlsoMatch = {QStringLiteral("node.name")};
+
+// Rules for native programs: matches = [ { application.name = X } { node.name = X } ].
+QList<Rule> toNativeRules(const QVariant& v, QStringList* warnings, const QString& file)
+{
+  QList<Rule> out;
+  for (const QVariant& entry : v.toList())
+  {
+    const QVariantMap rule = entry.toMap();
+    QString name;
+    bool ok = true;
+    for (const QVariant& m : rule.value("matches").toList())
+    {
+      const QVariantMap match = m.toMap();
+      if (match.size() != 1 || (match.firstKey() != kNativeKey && !kNativeAlsoMatch.contains(match.firstKey())) ||
+          (!name.isEmpty() && name != match.first().toString()))
+        ok = false;
+      else
+        name = match.first().toString();
+    }
+    if (!ok || name.isEmpty())
+    {
+      if (warnings)
+        warnings->append(QObject::tr("%1: skipped a rule with an unsupported match").arg(file));
+      continue;
+    }
+    const Values props = toValues(rule.value("actions").toMap().value("update-props"));
+    if (Rule* existing = ConfigModel::findRule(out, kNativeKey, name, false))
+      existing->props.insert(props);
+    else
+      out.append({kNativeKey, name, props});
+  }
+  return out;
+}
+
 QVariantMap readDoc(const QString& path, QStringList* warnings, bool* unreadable = nullptr)
 {
   if (unreadable)
@@ -200,7 +277,7 @@ QVariantMap readDoc(const QString& path, QStringList* warnings, bool* unreadable
 }
 }  // namespace
 
-ConfigModel ConfigModel::load(const ConfigPaths& paths, QStringList* warnings, QSet<ConfigFile>* unreadable)
+ConfigModel ConfigModel::load(const ConfigPaths& paths, QStringList* warnings, QSet<ConfigFile>* unreadable, QSet<ConfigFile>* outdated)
 {
   ConfigModel m;
   auto read = [&](ConfigFile f)
@@ -220,15 +297,52 @@ ConfigModel ConfigModel::load(const ConfigPaths& paths, QStringList* warnings, Q
   // Both files get the same stream settings; pipewire-pulse.conf wins if they were edited apart.
   m.stream = toValues(client.value("stream.properties"));
   m.stream.insert(toValues(pulse.value("stream.properties")));
+
+  // How graph values have to be written depends on PipeWire's own rules.
+  m.graphRulesElsewhere = EffectiveConfig::load(paths, ConfigFile::Pipewire).listBefore("context.properties.rules");
+
+  // Files from older versions: node.latency in pipewire-pulse.conf has no effect, WirePlumber lists
+  // without "override." are merged with other files' lists (S24_3LE is handled below).
+  if (outdated)
+  {
+    for (const QString& k : pulseIgnoredStreamKeys())
+    {
+      if (pulse.value("stream.properties").toMap().contains(k))
+        outdated->insert(ConfigFile::Pulse);
+    }
+    const QVariantMap bluezProps = wp.value("monitor.bluez.properties").toMap();
+    for (const QString& k : wpReplacedListKeys())
+    {
+      if (bluezProps.contains(k))
+        outdated->insert(ConfigFile::WirePlumber);
+    }
+  }
   m.includeClientRt = paths.hasClientRt();
   m.pulse = toValues(pulse.value("pulse.properties"));
   m.appRules = toRules(pulse.value("pulse.rules"), warnings, paths.ownFile(ConfigFile::Pulse));
   for (const Rule& r : toRules(pulse.value("stream.rules"), warnings, paths.ownFile(ConfigFile::Pulse)))
     findRule(m.appRules, r.matchKey, r.matchValue, true)->props.insert(r.props);
+  m.nativeAppRules = toNativeRules(client.value("stream.rules"), warnings, paths.ownFile(ConfigFile::Client));
   m.bluez = toValues(wp.value("monitor.bluez.properties"));
   m.wpSettings = toValues(wp.value("wireplumber.settings"));
   m.alsaRules = toRules(wp.value("monitor.alsa.rules"), warnings, paths.ownFile(ConfigFile::WirePlumber));
   m.bluezRules = toRules(wp.value("monitor.bluez.rules"), warnings, paths.ownFile(ConfigFile::WirePlumber));
+  // Up to 2.1.0 "S24_3LE" was offered for packed 24 bit, but PipeWire calls that S24LE and ignores
+  // S24_3LE: the device was opened with its default format. Removing the key keeps exactly that; S24LE
+  // could make the device disappear if it cannot do packed 24 bit.
+  for (Rule& r : m.alsaRules)
+  {
+    if (r.props.value("audio.format").toString() == "S24_3LE")
+    {
+      r.props.remove("audio.format");
+      if (outdated)
+        outdated->insert(ConfigFile::WirePlumber);
+      if (warnings)
+        warnings->append(QObject::tr("%1: the sample format S24_3LE is not a PipeWire format and had no effect, so it is removed when you save. "
+                                     "For packed 24 bit choose S24LE.")
+                           .arg(r.matchValue));
+    }
+  }
   m.removeEmptyRules();
   return m;
 }
@@ -236,6 +350,18 @@ ConfigModel ConfigModel::load(const ConfigPaths& paths, QStringList* warnings, Q
 const QStringList& ConfigModel::clientContextKeys()
 {
   static const QStringList keys = {"default.clock.quantum-limit"};
+  return keys;
+}
+
+const QStringList& ConfigModel::pulseIgnoredStreamKeys()
+{
+  static const QStringList keys = {"node.latency"};
+  return keys;
+}
+
+const QStringList& ConfigModel::wpReplacedListKeys()
+{
+  static const QStringList keys = {"bluez5.codecs", "bluez5.roles"};
   return keys;
 }
 
@@ -253,14 +379,22 @@ QMap<ConfigFile, QString> ConfigModel::render() const
   }
   const QString clientCtx = section("context.properties", clientContext);
 
-  out[ConfigFile::Pipewire] = file(section("context.properties", graph));
-  out[ConfigFile::Client] = file(clientCtx + section("stream.properties", stream));
+  // stream.properties replace what an application sets itself, which is intended: configured stream
+  // settings win over the application's choice. node.latency is left out for the PulseAudio bridge: it
+  // always sets it from the client's buffer sizes (PulseAudio bridge and Applications pages).
+  Values pulseStream = stream;
+  for (const QString& k : pulseIgnoredStreamKeys())
+    pulseStream.remove(k);
+
+  out[ConfigFile::Pipewire] = file(section("context.properties", graph) + graphRules(graph, graphRulesElsewhere));
+  // Per-program rules are applied after stream.properties, so they win over the Streams page.
+  out[ConfigFile::Client] = file(clientCtx + section("stream.properties", stream) + rules("stream.rules", nativeAppRules, false, RuleKeys::All, kNativeAlsoMatch));
   out[ConfigFile::ClientRt] = includeClientRt ? out[ConfigFile::Client] : QString();
   out[ConfigFile::Jack] = file(clientCtx);
-  out[ConfigFile::Pulse] = file(clientCtx + section("stream.properties", stream) + section("pulse.properties", pulse) + rules("pulse.rules", appRules, true, RuleKeys::PulseOnly) +
+  out[ConfigFile::Pulse] = file(clientCtx + section("stream.properties", pulseStream) + section("pulse.properties", pulse) + rules("pulse.rules", appRules, true, RuleKeys::PulseOnly) +
                                 rules("stream.rules", appRules, false, RuleKeys::StreamOnly));
-  out[ConfigFile::WirePlumber] = file(section("wireplumber.settings", wpSettings) + section("monitor.bluez.properties", bluez) + rules("monitor.alsa.rules", alsaRules, false) +
-                                      rules("monitor.bluez.rules", bluezRules, false));
+  out[ConfigFile::WirePlumber] = file(section("wireplumber.settings", wpSettings) + section("monitor.bluez.properties", bluez, wpReplacedListKeys()) +
+                                      rules("monitor.alsa.rules", alsaRules, false) + rules("monitor.bluez.rules", bluezRules, false));
   return out;
 }
 
@@ -294,7 +428,7 @@ const Rule* ConfigModel::findRule(const QList<Rule>& rules, const QString& key, 
 
 void ConfigModel::removeEmptyRules()
 {
-  for (QList<Rule>* list : {&alsaRules, &bluezRules, &appRules})
+  for (QList<Rule>* list : {&alsaRules, &bluezRules, &appRules, &nativeAppRules})
     list->removeIf([](const Rule& r) { return r.props.isEmpty(); });
 }
 

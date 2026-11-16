@@ -44,6 +44,7 @@ private:
     QString scope;
     QList<SettingEditor*> editors;
     QLabel* warnings = nullptr;
+    decltype(SettingBinding::checks) checks;
   };
 
   void updateDerived();

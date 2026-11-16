@@ -165,9 +165,10 @@ const Schema& Schema::instance()
   static const Schema schema = []
   {
     QFile f(":/schema.json");
-    f.open(QIODevice::ReadOnly);
     QString error;
-    Schema s = Schema::load(f.readAll(), &error);
+    Schema s = f.open(QIODevice::ReadOnly) ? Schema::load(f.readAll(), &error) : Schema();
+    if (!f.isOpen())
+      error = s.m_error = QStringLiteral("cannot open the built-in schema: %1").arg(f.errorString());
     if (!error.isEmpty())
       qWarning("Schema problems: %s", qPrintable(error));
     return s;

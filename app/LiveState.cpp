@@ -1,5 +1,7 @@
 #include "LiveState.h"
 
+#include <algorithm>
+
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -47,6 +49,13 @@ LiveNode::Kind kindOf(const QString& mediaClass, const QString& api)
 }
 }  // namespace
 
+bool LiveNode::supportsRate(int r) const
+{
+  if (supportedRates.contains(r))
+    return true;
+  return maxRate > 0 && r >= minRate && r <= maxRate;
+}
+
 QString LiveNode::currentValue(const QString& key) const
 {
   // The negotiated format is not a property, but it is what these settings control.
@@ -86,6 +95,7 @@ LiveSnapshot LiveSnapshot::parse(const QByteArray& pwDumpJson)
     return s;
   }
 
+  QMap<int, QJsonObject> clientProps;  // client id -> properties
   for (const QJsonValue& ov : doc.array())
   {
     const QJsonObject o = ov.toObject();
@@ -144,6 +154,38 @@ LiveSnapshot LiveSnapshot::parse(const QByteArray& pwDumpJson)
         n.rate = f.value("rate").toInt();
         n.channels = f.value("channels").toInt();
       }
+      // EnumFormat: "format" and "rate" are a value, a choice {default, alt1, ...} or a range {default, min, max}.
+      // Some PipeWire versions report the converter's side here (F32, rates 1..2^31) instead of the hardware's;
+      // a range no sound card has means the entry says nothing about the device.
+      for (const QJsonValue& ev : params.value("EnumFormat").toArray())
+      {
+        const QJsonObject e = ev.toObject();
+        const QJsonObject range = e.value("rate").toObject();
+        if (range.contains("max") && (range.value("max").toInt() > 1536000 || range.value("min").toInt() < 1000))
+          continue;
+        const QJsonValue fmt = e.value("format");
+        if (fmt.isString())
+          n.supportedFormats.append(fmt.toString());
+        const QJsonObject fmtChoice = fmt.toObject();
+        for (auto it = fmtChoice.begin(); it != fmtChoice.end(); ++it)
+          n.supportedFormats.append(it.value().toString());
+        const QJsonValue rate = e.value("rate");
+        const QJsonObject r = rate.toObject();
+        if (rate.isDouble())
+          n.supportedRates.append(rate.toInt());
+        else if (r.contains("min") && r.contains("max"))
+        {
+          n.minRate = n.minRate ? qMin(n.minRate, r.value("min").toInt()) : r.value("min").toInt();
+          n.maxRate = qMax(n.maxRate, r.value("max").toInt());
+        }
+        else
+        {
+          for (auto it = r.begin(); it != r.end(); ++it)
+            n.supportedRates.append(it.value().toInt());
+        }
+      }
+      n.supportedFormats.removeDuplicates();
+      n.supportedFormats.removeAll(QString());
       for (const QJsonValue& pv : params.value("Props").toArray())
       {
         const QJsonArray list = pv.toObject().value("params").toArray();
@@ -167,6 +209,7 @@ LiveSnapshot LiveSnapshot::parse(const QByteArray& pwDumpJson)
     }
     else if (type == "Client")
     {
+      clientProps.insert(o.value("id").toInt(), props);
       if (props.value("client.api").toString() != "pipewire-pulse")
         continue;
       LiveClient c;
@@ -175,6 +218,27 @@ LiveSnapshot LiveSnapshot::parse(const QByteArray& pwDumpJson)
       if (!c.binary.isEmpty())
         s.pulseClients.append(c);
     }
+  }
+
+  // Native PipeWire programs with an audio stream. Their stream.rules can only match what the stream itself
+  // carries: application.name, or node.name for libraries that set no application.name (e.g. GStreamer).
+  for (const LiveNode& n : s.nodes)
+  {
+    if (!n.mediaClass.startsWith("Stream/") || !n.mediaClass.endsWith("/Audio"))
+      continue;
+    const QJsonObject client = clientProps.value(n.props.value("client.id").toInt());
+    if (client.value("client.api").toString() == "pipewire-pulse")
+      continue;  // PulseAudio programs have their own rules
+    LiveClient c;
+    c.appName = n.props.value("application.name").toString();
+    if (c.appName.isEmpty())
+      c.appName = n.name;
+    c.binary = client.value("application.process.binary").toString();
+    if (c.appName.isEmpty())
+      continue;
+    const bool known = std::any_of(s.nativeClients.begin(), s.nativeClients.end(), [&](const LiveClient& o) { return o.appName == c.appName; });
+    if (!known)
+      s.nativeClients.append(c);
   }
   s.valid = true;
   return s;

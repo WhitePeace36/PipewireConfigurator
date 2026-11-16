@@ -31,7 +31,7 @@ public:
   explicit MainWindow(const Options& options, QWidget* parent = nullptr);
 
   // Page ids: graph, stream, pulse, outputs, inputs, alsa:<node.name>, bluetooth, bt:<address>,
-  // apps, app:<binary>, files.
+  // apps, app:<binary> (PulseAudio API), native:<application name> (native PipeWire), files.
   void showPage(const QString& id);
   QString currentPage() const { return m_currentId; }
   LiveState* liveState() const { return m_live; }
@@ -66,6 +66,7 @@ private:
   SettingsPage* buildBtDevicePage(const QString& address);
   SettingsPage* buildAppsPage();
   SettingsPage* buildAppPage(const QString& binary);
+  SettingsPage* buildNativeAppPage(const QString& name);
   SettingsPage* buildFilesPage();
   void addWirePlumberNotice(SettingsPage* page);
 

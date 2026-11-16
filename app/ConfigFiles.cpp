@@ -153,7 +153,35 @@ void mergeInto(QMap<QString, QMap<QString, ValueOrigin>>& target, const QVariant
     }
     const QVariantMap section = it->toMap();
     for (auto kv = section.begin(); kv != section.end(); ++kv)
-      target[name][kv.key()] = {kv.value(), file};
+    {
+      QString key = kv.key();
+      ValueOrigin& slot = target[name][key.startsWith(prefix) && replaced ? key.mid(prefix.size()) : key];
+      if (replaced && key.startsWith(prefix))
+      {
+        slot = {kv.value(), file};  // "override.<key>" replaces the value
+      }
+      else if (replaced && slot.isValid() && slot.value.typeId() == QMetaType::QVariantList && kv.value().typeId() == QMetaType::QVariantList)
+      {
+        // WirePlumber appends arrays of the same key from later files instead of replacing them.
+        QVariantList merged = slot.value.toList();
+        merged.append(kv.value().toList());
+        slot = {merged, file};
+      }
+      else
+      {
+        slot = {kv.value(), file};
+      }
+    }
+  }
+}
+
+// Top-level arrays such as context.properties.rules, appended in load order.
+void collectLists(QMap<QString, QVariantList>& target, const QVariantMap& doc)
+{
+  for (auto it = doc.begin(); it != doc.end(); ++it)
+  {
+    if (it->typeId() == QMetaType::QVariantList)
+      target[it.key()].append(it->toList());
   }
 }
 }  // namespace
@@ -186,7 +214,11 @@ EffectiveConfig EffectiveConfig::load(const ConfigPaths& paths, ConfigFile which
     if (error.isError())
       cfg.errors.append(QStringLiteral("%1:%2: %3").arg(path).arg(error.line).arg(error.message));
     else
+    {
       mergeInto(target, doc, path, !supportsOverride ? nullptr : (&target == &cfg.m_after ? &cfg.m_replacedAfter : &replacedBefore));
+      if (&target == &cfg.m_before)
+        collectLists(cfg.m_listsBefore, doc);
+    }
   };
 
   if (!cfg.mainFile.isEmpty())

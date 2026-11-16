@@ -1,5 +1,6 @@
 #include "Checks.h"
 
+#include "LiveState.h"
 #include "Schema.h"
 #include "SpaJson.h"
 
@@ -125,6 +126,9 @@ QStringList runChecks(const QString& scope, const ValueGetter& value, const Valu
     const QStringList codecs = SpaJson::toStringList(value("bluez5.codecs"));
     if (!value("bluez5.codecs").isEmpty() && !codecs.contains("sbc"))
       w.append(QObject::tr("SBC is not allowed. It is the one codec every headphone supports, so without it some headphones will not connect in high-quality mode."));
+    if (!value("bluez5.codecs").isEmpty() && !codecs.contains("msbc") && value("bluez5.enable-msbc") != "false")
+      w.append(QObject::tr("mSBC is not in the allowed codecs, so headset microphones use the low-quality CVSD codec even with mSBC enabled. Tick mSBC "
+                           "to keep wideband speech."));
     // Roles are the computer's side of the connection: it plays to headphones as the A2DP source.
     const QStringList roles = SpaJson::toStringList(value("bluez5.roles"));
     if (!value("bluez5.roles").isEmpty() && !roles.contains("a2dp_source"))
@@ -132,6 +136,50 @@ QStringList runChecks(const QString& scope, const ValueGetter& value, const Valu
     const long long rate = num(value("bluez5.default.rate"));
     if (rate > 48000)
       w.append(QObject::tr("Only a few codecs (LDAC, LC3plus) support more than 48 kHz; others fall back to 48 or 44.1 kHz."));
+  }
+  return w;
+}
+
+QStringList deviceChecks(const LiveNode* node, const ValueGetter& value)
+{
+  QStringList w;
+  const QString format = value("audio.format");
+  const long long rate = value("audio.rate").toLongLong();
+  const QList<int> allowed = parseIntList(value("audio.allowed-rates"));
+  if (!node)
+  {
+    if (!format.isEmpty() || rate > 0)
+      w.append(QObject::tr("The device is not running. If it disappeared after you set a sample format or a fixed rate, the device cannot "
+                           "be opened with it: untick that setting and use Save and Apply."));
+    return w;
+  }
+
+  // The device only reports its full abilities while nothing narrows them; otherwise there is nothing to compare.
+  if (!format.isEmpty() && !node->supportedFormats.isEmpty() && !node->props.contains("audio.format") && !node->supportedFormats.contains(format))
+  {
+    QStringList usable;  // interleaved little-endian names, as offered on this page
+    for (const QString& f : node->supportedFormats)
+    {
+      if (f.endsWith("LE"))
+        usable.append(f);
+    }
+    w.append(QObject::tr("The device does not support %1 (it offers %2). PipeWire could not open it and the device would disappear.")
+               .arg(format, usable.isEmpty() ? node->supportedFormats.join(", ") : usable.join(", ")));
+  }
+  const bool ratesKnown =
+    (!node->supportedRates.isEmpty() || node->maxRate > 0) && !node->props.contains("audio.rate") && !node->props.contains("audio.allowed-rates");
+  if (ratesKnown && rate > 0 && !node->supportsRate(int(rate)))
+    w.append(QObject::tr("The device does not support %1 Hz. PipeWire could not open it and the device would disappear.").arg(rate));
+  if (ratesKnown)
+  {
+    QStringList unsupported;
+    for (int r : allowed)
+    {
+      if (!node->supportsRate(r))
+        unsupported.append(QString::number(r));
+    }
+    if (!unsupported.isEmpty())
+      w.append(QObject::tr("The device does not support %1 Hz, so it is not used at these rates.").arg(unsupported.join(", ")));
   }
   return w;
 }

@@ -70,6 +70,8 @@ public:
   // Value set by a drop-in that is loaded after ours and therefore overrides our setting. When that
   // drop-in replaces the whole section without setting |key|, the result has a file but no value.
   ValueOrigin overriddenBy(const QString& section, const QString& key) const;
+  // Top-level array |section| (e.g. "context.properties.rules") of the files loaded before ours, in load order.
+  QVariantList listBefore(const QString& section) const { return m_listsBefore.value(section); }
 
   QString mainFile;
   QStringList dropInsBefore;  // loaded before our file
@@ -80,4 +82,5 @@ private:
   QMap<QString, QMap<QString, ValueOrigin>> m_before;
   QMap<QString, QMap<QString, ValueOrigin>> m_after;
   QMap<QString, QString> m_replacedAfter;  // section -> later drop-in that replaces it ("override.")
+  QMap<QString, QVariantList> m_listsBefore;
 };

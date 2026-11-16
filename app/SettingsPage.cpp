@@ -78,6 +78,7 @@ void SettingsPage::addSection(const QString& scope, const SettingBinding& bindin
 {
   Section section;
   section.scope = scope;
+  section.checks = binding.checks;
 
   if (!heading.isEmpty())
   {
@@ -233,7 +234,7 @@ void SettingsPage::updateDerived()
         e->refreshHints();
     }
 
-    const QStringList warnings = runChecks(
+    QStringList warnings = runChecks(
       s.scope, [this, &s](const QString& k) { return valueIn(s, k); },
       [this, &s](const QString& k)
       {
@@ -241,6 +242,8 @@ void SettingsPage::updateDerived()
           return valueIn(s, k);
         return m_graphValue ? m_graphValue(k) : QString();
       });
+    if (s.checks)
+      warnings += s.checks([this, &s](const QString& k) { return valueIn(s, k); });
     QStringList items;
     for (const QString& w : warnings)
       items.append("⚠ " + w.toHtmlEscaped());

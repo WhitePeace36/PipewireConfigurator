@@ -46,7 +46,7 @@
           "key": "node.latency",
           "label": "Requested latency",
           "type": "fraction",
-          "help": "Buffer size a stream asks for when the application does not ask for one itself, written as samples / rate."
+          "help": "Buffer size the stream asks for, written as samples / rate. It replaces what the application asks for itself."
         }
       ]
     },
@@ -78,12 +78,12 @@
           "type": "enum",
           "options": [
             { "value": "S16LE", "label": "S16LE (16 bit)" },
-            { "value": "S24LE", "label": "S24LE (24 bit in 32)" },
-            { "value": "S24_3LE", "label": "S24_3LE (24 bit packed)" },
+            { "value": "S24_32LE", "label": "S24_32LE (24 bit in 32)" },
+            { "value": "S24LE", "label": "S24LE (24 bit packed, 3 bytes)" },
             { "value": "S32LE", "label": "S32LE (32 bit)" },
             { "value": "F32LE", "label": "F32LE (32 bit float)" }
           ],
-          "help": "Format the device is opened with. Only pick a format the hardware supports."
+          "help": "Format the device is opened with. With a format or rate the hardware does not support, PipeWire cannot open the device and it disappears; the page warns when the device reports that it cannot do it."
         }
       ]
     },
@@ -306,9 +306,10 @@
             { "value": "opus_05_duplex", "label": "Opus 05 duplex" },
             { "value": "opus_05_pro", "label": "Opus 05 pro" },
             { "value": "opus_g", "label": "Opus G" },
-            { "value": "lc3", "label": "LC3 (LE Audio)" }
+            { "value": "msbc", "label": "mSBC (headset microphone, wideband)" },
+            { "value": "lc3_swb", "label": "LC3-SWB (headset microphone, super-wideband)" }
           ],
-          "help": "Codecs offered to headphones. When not set, every codec your PipeWire build supports is allowed. Codecs your PipeWire build lacks are ignored."
+          "help": "Codecs offered to headphones. When not set, every codec your PipeWire build supports is allowed. Codecs your PipeWire build lacks are ignored. The list also covers the headset profile: without mSBC the microphone uses the low-quality CVSD codec. LE Audio (LC3) is not affected; it is switched with the LE Audio roles under Profiles."
         },
         { "key": "bluez5.enable-sbc-xq", "label": "Enable SBC-XQ", "type": "bool", "help": "Higher-bitrate SBC. Works on most headphones but not all, so by default it is only enabled for known-good models." },
         {
@@ -343,7 +344,7 @@
           ],
           "help": "Roles this computer takes. To play to headphones it is the A2DP source; to use a headset microphone it is the HFP audio gateway. The sink and hands-free roles are for receiving audio, e.g. from a phone."
         },
-        { "key": "bluez5.enable-msbc", "label": "Enable mSBC", "type": "bool", "help": "Wideband speech codec for the headset profile. Enabled by default for known-good headsets." },
+        { "key": "bluez5.enable-msbc", "label": "Enable mSBC", "type": "bool", "help": "Wideband speech codec for the headset profile. Enabled by default for known-good headsets. When Allowed codecs is set, mSBC must also be ticked there." },
         { "key": "bluez5.enable-hw-volume", "label": "Hardware volume", "type": "bool", "help": "Let the headphones control the volume themselves. Turn off if volume jumps or is too quiet." },
         {
           "key": "bluez5.hfphsp-backend",

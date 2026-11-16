@@ -11,6 +11,11 @@ using ValueGetter = std::function<QString(const QString& key)>;
 
 QStringList runChecks(const QString& scope, const ValueGetter& value, const ValueGetter& graph);
 
+struct LiveNode;
+// Checks a sound card output or input's format and rates against what the running device reports.
+// |node| is null when the device is not running.
+QStringList deviceChecks(const LiveNode* node, const ValueGetter& value);
+
 // Parses "[ 44100 48000 ]" style lists into integers.
 QList<int> parseIntList(const QString& text);
 // Parses "512/48000" into milliseconds, or -1.
